@@ -1,0 +1,971 @@
+import SwiftUI
+import AVFoundation
+import Speech
+
+// MARK: - Models
+
+struct Statement: Identifiable, Codable {
+    let id: UUID
+    let text: String
+    let isDeclarative: Bool
+    let isTrue: Bool?
+    let explanation: String?
+    let timestamp: Date
+    let speaker: String?
+    
+    init(id: UUID = UUID(), text: String, isDeclarative: Bool, isTrue: Bool? = nil, explanation: String? = nil, timestamp: Date = Date(), speaker: String? = nil) {
+        self.id = id
+        self.text = text
+        self.isDeclarative = isDeclarative
+        self.isTrue = isTrue
+        self.explanation = explanation
+        self.timestamp = timestamp
+        self.speaker = speaker
+    }
+}
+
+struct AnalysisResponse: Codable {
+    let statements: [StatementAnalysis]
+}
+
+struct StatementAnalysis: Codable {
+    let text: String
+    let isDeclarative: Bool
+    let isTrue: Bool?
+    let explanation: String?
+}
+
+struct VapiTranscriptSegment: Codable {
+    let text: String
+    let speaker: String?
+    let timestamp: Double?
+    
+    enum CodingKeys: String, CodingKey {
+        case text, speaker, timestamp
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        speaker = try? container.decode(String.self, forKey: .speaker)
+        timestamp = try? container.decode(Double.self, forKey: .timestamp)
+    }
+}
+
+struct JanitorResponse: Codable {
+    let response: String?
+    let message: String?
+    let content: String?
+}
+
+// MARK: - Vapi Service
+
+class VapiService: ObservableObject {
+    private let vapiAPIKey = "PUT KEY HERE"
+    @Published var isAvailable = true
+    
+    func transcribeText(_ text: String) async throws -> VapiTranscriptSegment {
+        let url = URL(string: "https://api.vapi.ai/call")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(vapiAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        
+        let body: [String: Any] = [
+            "assistant": [
+                "model": [
+                    "provider": "openai",
+                    "model": "gpt-3.5-turbo"
+                ],
+                "transcriber": [
+                    "provider": "deepgram",
+                    "model": "nova-2"
+                ]
+            ],
+            "text": text
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        
+        if httpResponse.statusCode != 200 && httpResponse.statusCode != 201 {
+            isAvailable = false
+            throw NSError(domain: "VapiAPI", code: httpResponse.statusCode, userInfo: nil)
+        }
+        
+        let result = try JSONDecoder().decode(VapiTranscriptSegment.self, from: data)
+        return result
+    }
+}
+
+// MARK: - Fact Checking Services
+
+class ClaudeFactChecker: ObservableObject {
+    private let anthropicAPIKey = "PUT KEY HERE"
+    
+    func analyzeStatement(_ text: String, speaker: String?) async throws -> Statement {
+        print("🔵 Claude API: Starting analysis for '\(text)'")
+        
+        let systemPrompt = """
+        You are a precise fact-checking assistant. Analyze the given statement and return ONLY valid JSON.
+        
+        For the statement:
+        1. If DECLARATIVE (objective, verifiable): Set "isDeclarative": true, "isTrue": true/false
+        2. If OPINION (subjective): Set "isDeclarative": false, "isTrue": null
+        
+        Return ONLY this JSON (no markdown, no extra text):
+        {
+            "text": "exact statement",
+            "isDeclarative": true,
+            "isTrue": false,
+            "explanation": "Brief reason if false, null if true or opinion"
+        }
+        """
+        
+        let userPrompt = "Analyze: \"\(text)\""
+        
+        print("🔵 Claude API: Preparing request...")
+        
+        let url = URL(string: "https://api.anthropic.com/v1/messages")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(anthropicAPIKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.timeoutInterval = 30
+        
+        let requestBody: [String: Any] = [
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1024,
+            "system": systemPrompt,
+            "messages": [["role": "user", "content": userPrompt]]
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        print("🔵 Claude API: Sending request...")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ Claude API: Invalid response type")
+            throw URLError(.badServerResponse)
+        }
+        
+        print("🔵 Claude API: Got response with status \(httpResponse.statusCode)")
+        
+        if httpResponse.statusCode != 200 {
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ Claude API Error (\(httpResponse.statusCode)): \(errorString)")
+            throw NSError(domain: "ClaudeAPI", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorString])
+        }
+        
+        let jsonResponse = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let content = jsonResponse?["content"] as? [[String: Any]],
+              let textContent = content.first?["text"] as? String else {
+            print("❌ Claude API: Cannot parse response structure")
+            throw URLError(.cannotParseResponse)
+        }
+        
+        print("🔵 Claude API: Response text: \(textContent)")
+        
+        var cleanedJSON = textContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanedJSON.contains("```") {
+            cleanedJSON = cleanedJSON.replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        if let jsonStart = cleanedJSON.firstIndex(of: "{"),
+           let jsonEnd = cleanedJSON.lastIndex(of: "}") {
+            cleanedJSON = String(cleanedJSON[jsonStart...jsonEnd])
+        }
+        
+        print("🔵 Claude API: Cleaned JSON: \(cleanedJSON)")
+        
+        let jsonData = cleanedJSON.data(using: .utf8)!
+        let analysis = try JSONDecoder().decode(StatementAnalysis.self, from: jsonData)
+        
+        print("🔵 Claude API: Successfully decoded - isDeclarative: \(analysis.isDeclarative), isTrue: \(analysis.isTrue?.description ?? "nil")")
+        
+        return Statement(
+            text: analysis.text,
+            isDeclarative: analysis.isDeclarative,
+            isTrue: analysis.isTrue,
+            explanation: analysis.explanation,
+            speaker: speaker
+        )
+    }
+}
+
+class JanitorAIFactChecker: ObservableObject {
+    private let janitorAPIKey = "PUT KEY HERE"
+    @Published var isAvailable = true
+    
+    func analyzeStatement(_ text: String, speaker: String?) async throws -> Statement {
+        print("🟣 Janitor AI: Starting analysis for '\(text)'")
+        
+        let url = URL(string: "https://api.janitorai.com/api/v1/chat")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(janitorAPIKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10
+        
+        let prompt = """
+        Analyze this statement for fact-checking: "\(text)"
+        
+        Return ONLY valid JSON in this exact format:
+        {
+            "text": "\(text)",
+            "isDeclarative": true or false,
+            "isTrue": true or false or null,
+            "explanation": "explanation text or null"
+        }
+        """
+        
+        let body: [String: Any] = [
+            "messages": [
+                ["role": "user", "content": prompt]
+            ],
+            "model": "gpt-3.5-turbo"
+        ]
+        
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            isAvailable = false
+            throw URLError(.badServerResponse)
+        }
+        
+        print("🟣 Janitor AI: Got response with status \(httpResponse.statusCode)")
+        
+        // Mark as unavailable immediately on auth errors
+        if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+            await MainActor.run {
+                self.isAvailable = false
+            }
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ Janitor AI Auth Error (\(httpResponse.statusCode)): \(errorString)")
+            throw NSError(domain: "JanitorAPI", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Authentication failed"])
+        }
+        
+        if httpResponse.statusCode != 200 {
+            await MainActor.run {
+                self.isAvailable = false
+            }
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ Janitor AI Error (\(httpResponse.statusCode)): \(errorString)")
+            throw NSError(domain: "JanitorAPI", code: httpResponse.statusCode, userInfo: nil)
+        }
+        
+        // Try to parse Janitor AI response
+        if let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var responseText = ""
+            
+            // Try different possible response formats
+            if let response = jsonResponse["response"] as? String {
+                responseText = response
+            } else if let message = jsonResponse["message"] as? String {
+                responseText = message
+            } else if let content = jsonResponse["content"] as? String {
+                responseText = content
+            } else if let choices = jsonResponse["choices"] as? [[String: Any]],
+                      let firstChoice = choices.first,
+                      let message = firstChoice["message"] as? [String: Any],
+                      let content = message["content"] as? String {
+                responseText = content
+            }
+            
+            print("🟣 Janitor AI: Response text: \(responseText)")
+            
+            // Clean and parse JSON from response
+            var cleanedJSON = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanedJSON.contains("```") {
+                cleanedJSON = cleanedJSON.replacingOccurrences(of: "```json", with: "")
+                    .replacingOccurrences(of: "```", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            
+            if let jsonStart = cleanedJSON.firstIndex(of: "{"),
+               let jsonEnd = cleanedJSON.lastIndex(of: "}") {
+                cleanedJSON = String(cleanedJSON[jsonStart...jsonEnd])
+            }
+            
+            if let jsonData = cleanedJSON.data(using: .utf8),
+               let analysis = try? JSONDecoder().decode(StatementAnalysis.self, from: jsonData) {
+                print("🟣 Janitor AI: Successfully decoded")
+                
+                return Statement(
+                    text: analysis.text,
+                    isDeclarative: analysis.isDeclarative,
+                    isTrue: analysis.isTrue,
+                    explanation: analysis.explanation,
+                    speaker: speaker
+                )
+            }
+        }
+        
+        // If parsing fails, mark as unavailable and throw error
+        await MainActor.run {
+            self.isAvailable = false
+        }
+        throw NSError(domain: "JanitorAPI", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to parse response"])
+    }
+}
+
+// MARK: - Unified Fact Checker (with fallback chain)
+
+class UnifiedFactChecker: ObservableObject {
+    private let janitorChecker = JanitorAIFactChecker()
+    private let claudeChecker = ClaudeFactChecker()
+    
+    @Published var currentService: String = "Claude AI"
+    private var hasTestedJanitor = false
+    
+    func analyzeStatement(_ text: String, speaker: String?) async throws -> Statement {
+        // Only try Janitor AI once - if it fails, never try again
+        if !hasTestedJanitor && janitorChecker.isAvailable {
+            do {
+                print("🎯 Attempting Janitor AI analysis...")
+                let result = try await janitorChecker.analyzeStatement(text, speaker: speaker)
+                await MainActor.run {
+                    self.currentService = "Janitor AI"
+                    self.hasTestedJanitor = true
+                }
+                return result
+            } catch {
+                print("⚠️ Janitor AI failed: \(error.localizedDescription)")
+                print("⚠️ Permanently falling back to Claude")
+                await MainActor.run {
+                    self.hasTestedJanitor = true
+                    self.currentService = "Claude AI"
+                }
+            }
+        }
+        
+        // Use Claude (either as fallback or default)
+        print("🎯 Using Claude API...")
+        let result = try await claudeChecker.analyzeStatement(text, speaker: speaker)
+        await MainActor.run {
+            self.currentService = "Claude AI"
+        }
+        return result
+    }
+}
+
+// MARK: - Improved Transcription Manager
+
+class TranscriptionManager: NSObject, ObservableObject, SFSpeechRecognizerDelegate, AVAudioRecorderDelegate {
+    @Published var isRecording = false
+    @Published var currentText = ""
+    @Published var statements: [Statement] = []
+    @Published var errorMessage: String? = nil
+    @Published var isMultiPartyMode = false
+    @Published var currentService = "Janitor AI"
+    
+    private var audioRecorder: AVAudioRecorder?
+    private var speechRecognizer: SFSpeechRecognizer?
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private let audioEngine = AVAudioEngine()
+    
+    private var unifiedChecker = UnifiedFactChecker()
+    private var vapiService = VapiService()
+    
+    private var pendingText = ""
+    private var lastSpeechTime = Date()
+    private var silenceTimer: Timer?
+    private let silenceThreshold: TimeInterval = 1.5
+    private var processedTextLength = 0
+    private var isProcessingStatement = false
+    private var currentSpeaker = "Speaker 1"
+    private var speakerCounter = 1
+    
+    override init() {
+        super.init()
+        speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        speechRecognizer?.delegate = self
+        requestAuthorization()
+    }
+    
+    private func requestAuthorization() {
+        SFSpeechRecognizer.requestAuthorization { [weak self] authStatus in
+            DispatchQueue.main.async {
+                switch authStatus {
+                case .authorized:
+                    print("Speech recognition authorized")
+                case .denied, .restricted, .notDetermined:
+                    self?.errorMessage = "Speech recognition not available"
+                    print("Speech recognition not authorized: \(authStatus)")
+                @unknown default:
+                    self?.errorMessage = "Unknown authorization status"
+                }
+            }
+        }
+        
+        AVAudioApplication.requestRecordPermission { [weak self] allowed in
+            if !allowed {
+                DispatchQueue.main.async {
+                    self?.errorMessage = "Microphone access denied"
+                }
+            }
+        }
+    }
+    
+    func startRecording(multiParty: Bool = false) {
+        guard !isRecording else { return }
+        
+        isMultiPartyMode = multiParty
+        isRecording = true
+        statements.removeAll()
+        currentText = ""
+        pendingText = ""
+        processedTextLength = 0
+        lastSpeechTime = Date()
+        
+        currentSpeaker = "Speaker 1"
+        speakerCounter = 1
+        
+        startSpeechRecognition()
+        startSilenceDetection()
+    }
+    
+    func stopRecording() {
+        isRecording = false
+        
+        if !pendingText.isEmpty {
+            processPendingStatement()
+        }
+        
+        audioEngine.stop()
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        
+        recognitionRequest = nil
+        recognitionTask = nil
+        
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+        
+        audioEngine.inputNode.removeTap(onBus: 0)
+    }
+    
+    private func startSilenceDetection() {
+        silenceTimer?.invalidate()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.checkForSilence()
+        }
+    }
+    
+    private func checkForSilence() {
+        let timeSinceLastSpeech = Date().timeIntervalSince(lastSpeechTime)
+        
+        if timeSinceLastSpeech >= silenceThreshold && !pendingText.isEmpty && !isProcessingStatement {
+            processPendingStatement()
+        }
+    }
+    
+    private func processPendingStatement() {
+        guard !pendingText.isEmpty, !isProcessingStatement else { return }
+        
+        isProcessingStatement = true
+        let statementText = pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let speaker = isMultiPartyMode ? currentSpeaker : nil
+        
+        print("📝 Processing statement: '\(statementText)' from \(speaker ?? "single speaker")")
+        
+        pendingText = ""
+        
+        Task {
+            do {
+                // Try Vapi transcription enhancement (optional, non-blocking)
+                if vapiService.isAvailable {
+                    do {
+                        let _ = try await vapiService.transcribeText(statementText)
+                        print("✅ Vapi transcription successful")
+                    } catch {
+                        print("⚠️ Vapi transcription failed, continuing with original text")
+                    }
+                }
+                
+                // Analyze with unified checker (Janitor AI -> Claude fallback)
+                let statement = try await unifiedChecker.analyzeStatement(statementText, speaker: speaker)
+                
+                await MainActor.run {
+                    self.statements.append(statement)
+                    self.currentService = self.unifiedChecker.currentService
+                    print("✅ Statement added to log via \(self.currentService)")
+                    self.isProcessingStatement = false
+                    
+                    if self.isMultiPartyMode {
+                        self.switchSpeaker()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    print("❌ Failed to analyze statement: \(error)")
+                    self.errorMessage = "Analysis failed: \(error.localizedDescription)"
+                    self.isProcessingStatement = false
+                }
+            }
+        }
+    }
+    
+    private func switchSpeaker() {
+        speakerCounter += 1
+        currentSpeaker = "Speaker \(((speakerCounter - 1) % 2) + 1)"
+    }
+    
+    private func startSpeechRecognition() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .mixWithOthers])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            
+            recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+            guard let recognitionRequest = recognitionRequest else { return }
+            
+            recognitionRequest.shouldReportPartialResults = true
+            recognitionRequest.requiresOnDeviceRecognition = false
+            
+            let inputNode = audioEngine.inputNode
+            let recordingFormat = inputNode.outputFormat(forBus: 0)
+            
+            inputNode.removeTap(onBus: 0)
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+                recognitionRequest.append(buffer)
+            }
+            
+            audioEngine.prepare()
+            try audioEngine.start()
+            
+            recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+                guard let self = self else { return }
+                
+                if let result = result {
+                    let newTranscript = result.bestTranscription.formattedString
+                    
+                    DispatchQueue.main.async {
+                        self.currentText = newTranscript
+                        
+                        if newTranscript.count > self.processedTextLength {
+                            let startIndex = newTranscript.index(newTranscript.startIndex, offsetBy: self.processedTextLength)
+                            let newText = String(newTranscript[startIndex...])
+                            
+                            self.pendingText += newText
+                            self.processedTextLength = newTranscript.count
+                            self.lastSpeechTime = Date()
+                            
+                            print("🎤 New text detected: '\(newText)'")
+                            print("📋 Pending text: '\(self.pendingText)'")
+                        }
+                        
+                        if result.isFinal {
+                            print("🏁 Final result received")
+                            if !self.pendingText.isEmpty {
+                                self.processPendingStatement()
+                            }
+                            
+                            if self.isRecording {
+                                self.restartRecognition()
+                            }
+                        }
+                    }
+                }
+                
+                if error != nil {
+                    print("Recognition error: \(error?.localizedDescription ?? "Unknown")")
+                    DispatchQueue.main.async {
+                        if self.isRecording {
+                            self.restartRecognition()
+                        }
+                    }
+                }
+            }
+            
+            print("🎙️ Speech recognition started")
+            
+        } catch {
+            print("Failed to start speech recognition: \(error)")
+            errorMessage = "Failed to start recording: \(error.localizedDescription)"
+        }
+    }
+    
+    private func restartRecognition() {
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        
+        recognitionRequest = nil
+        recognitionTask = nil
+        processedTextLength = 0
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self, self.isRecording else { return }
+            self.startSpeechRecognition()
+        }
+    }
+}
+
+// MARK: - Main Content View
+
+struct ContentView: View {
+    @StateObject private var transcriptionManager = TranscriptionManager()
+    @State private var selectedMode: String? = nil
+    @State private var showModeSelection = false
+    
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.1, green: 0.05, blue: 0.2),
+                    Color(red: 0.05, green: 0.0, blue: 0.15),
+                    Color.black
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            ScrollView {
+                VStack(spacing: 24) {
+                    headerView
+                    
+                    if !transcriptionManager.isRecording {
+                        modeSelectionCard
+                    }
+                    
+                    recordingControlsCard
+                    
+                    if transcriptionManager.isRecording && !transcriptionManager.currentText.isEmpty {
+                        currentTranscriptionCard
+                    }
+                    
+                    if !transcriptionManager.statements.isEmpty {
+                        liveResultsSection
+                    }
+                    
+                    if let error = transcriptionManager.errorMessage {
+                        Text(error)
+                            .foregroundColor(.red)
+                            .padding()
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                }
+                .padding()
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+    
+    private var headerView: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.white)
+                
+                Text("No Cap!")
+                    .font(.system(size: 40, weight: .bold, design: .default))
+                    .foregroundColor(.white)
+            }
+            
+            Text("Live Unbiased Analysis")
+                .font(.system(size: 18))
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .padding(.vertical)
+    }
+    
+    private var modeSelectionCard: some View {
+        VStack(spacing: 16) {
+            Text("Select Mode")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.white)
+            
+            HStack(spacing: 16) {
+                Button(action: {
+                    selectedMode = "single"
+                }) {
+                    VStack(spacing: 12) {
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 30))
+                        Text("Single Speaker")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundColor(selectedMode == "single" ? .white : .white.opacity(0.6))
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        selectedMode == "single" ?
+                        LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing) :
+                        LinearGradient(colors: [Color.white.opacity(0.1)], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .cornerRadius(12)
+                }
+                
+                Button(action: {
+                    selectedMode = "multi"
+                }) {
+                    VStack(spacing: 12) {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 30))
+                        Text("Multi-Party")
+                            .font(.system(size: 14, weight: .medium))
+                        Text("(Voice Recognition)")
+                            .font(.system(size: 10))
+                            .opacity(0.7)
+                    }
+                    .foregroundColor(selectedMode == "multi" ? .white : .white.opacity(0.6))
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        selectedMode == "multi" ?
+                        LinearGradient(colors: [.purple, .pink], startPoint: .leading, endPoint: .trailing) :
+                        LinearGradient(colors: [Color.white.opacity(0.1)], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .cornerRadius(12)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(16)
+    }
+    
+    private var recordingControlsCard: some View {
+        VStack(spacing: 20) {
+            if !transcriptionManager.isRecording {
+                Button(action: {
+                    if let mode = selectedMode {
+                        startRecording(multiParty: mode == "multi")
+                    }
+                }) {
+                    if selectedMode != nil {
+                        ZStack {
+                            Circle()
+                                .fill(LinearGradient(colors: [.green, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 120, height: 120)
+                            
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(.white)
+                        }
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 20))
+                                .foregroundColor(.white.opacity(0.5))
+                            Text("Select a mode above")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        .padding()
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(12)
+                    }
+                }
+            } else {
+                Button(action: { transcriptionManager.stopRecording() }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.red.opacity(0.3))
+                            .frame(width: 120, height: 120)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.red, lineWidth: 4)
+                            )
+                            .scaleEffect(1.1)
+                            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: transcriptionManager.isRecording)
+                        
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.white)
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            
+            Text(transcriptionManager.isRecording ? "Tap to stop" : "Select a mode to begin")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.white.opacity(0.8))
+        }
+        .padding()
+        .background(Color.white.opacity(0.1))
+        .cornerRadius(16)
+    }
+    
+    private var currentTranscriptionCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "waveform")
+                    .foregroundColor(.green)
+                Text("Current Speech")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+            }
+            
+            Text(transcriptionManager.currentText)
+                .font(.system(size: 15))
+                .foregroundColor(.white.opacity(0.9))
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.black.opacity(0.3))
+                .cornerRadius(8)
+        }
+        .padding()
+        .background(Color.white.opacity(0.1))
+        .cornerRadius(16)
+    }
+    
+    private var liveResultsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "list.bullet.clipboard.fill")
+                    .foregroundColor(.green)
+                Text("Live Analysis Log")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            
+            VStack(spacing: 12) {
+                ForEach(transcriptionManager.statements.reversed()) { statement in
+                    StatementCard(statement: statement, showSpeaker: transcriptionManager.isMultiPartyMode)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(16)
+    }
+    
+    private func startRecording(multiParty: Bool) {
+        transcriptionManager.startRecording(multiParty: multiParty)
+    }
+}
+
+// MARK: - Statement Card View
+
+struct StatementCard: View {
+    let statement: Statement
+    let showSpeaker: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if showSpeaker, let speaker = statement.speaker {
+                Text(speaker)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.purple)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.purple.opacity(0.2))
+                    .cornerRadius(8)
+            }
+            
+            Text(statement.text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.white)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            HStack(spacing: 8) {
+                if statement.isDeclarative {
+                    statusBadge
+                } else {
+                    opinionBadge
+                }
+                
+                Spacer()
+                
+                Text(statement.timestamp, style: .time)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            
+            if let explanation = statement.explanation {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.orange)
+                            .font(.system(size: 12))
+                        Text("Explanation")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.orange)
+                    }
+                    
+                    Text(explanation)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(10)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(8)
+                }
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.08))
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(borderColor, lineWidth: 2)
+        )
+    }
+    
+    private var statusBadge: some View {
+        HStack(spacing: 6) {
+            Image(systemName: statement.isTrue == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundColor(statement.isTrue == true ? .green : .red)
+            
+            Text(statement.isTrue == true ? "TRUE" : "FALSE")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(statement.isTrue == true ? .green : .red)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            (statement.isTrue == true ? Color.green : Color.red).opacity(0.2)
+        )
+        .cornerRadius(12)
+    }
+    
+    private var opinionBadge: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bubble.left.fill")
+                .foregroundColor(.blue)
+            
+            Text("OPINION")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.blue)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.blue.opacity(0.2))
+        .cornerRadius(12)
+    }
+    
+    private var borderColor: Color {
+        if !statement.isDeclarative {
+            return .blue.opacity(0.3)
+        }
+        return statement.isTrue == true ? .green.opacity(0.3) : .red.opacity(0.3)
+    }
+}
+
+// MARK: - App Entry Point
+
+@main
+struct TruthCheckerApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
