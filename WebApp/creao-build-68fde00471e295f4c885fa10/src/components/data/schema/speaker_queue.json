@@ -1,0 +1,191 @@
+{
+  "id": "102019a1d99369a78d297fba350ed830976",
+  "version": "102019a1d99369a77fcafafc1bfbc99d807",
+  "schema": {
+    "name": "speaker_queue",
+    "description": "Manages a time-ordered queue of speakers' statements within a session.",
+    "fields": [
+      {
+        "name": "id",
+        "description": "Unique identifier for each data of this entity.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal system identifier."
+        }
+      },
+      {
+        "name": "data_creator",
+        "description": "id of the user who creates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "data_updater",
+        "description": "id of the user who updates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "create_time",
+        "description": "create time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "update_time",
+        "description": "update time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "user_session_id",
+        "description": "The ID of the user session this entry belongs to.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Links to the parent user session."
+        }
+      },
+      {
+        "name": "speaker_id",
+        "description": "Identifier of the user who made the statement.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 3,
+          "reason": "Contains user identifying information."
+        }
+      },
+      {
+        "name": "statement_text",
+        "description": "The text of the statement made by the speaker.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 3,
+          "reason": "Contains user-generated content which could be sensitive."
+        }
+      },
+      {
+        "name": "statement_timestamp",
+        "description": "The timestamp unix when the statement was made.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Metadata for ordering statements."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "processing_status",
+        "description": "The current processing status of the statement.",
+        "type": 100,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal system state."
+        },
+        "enumeration": [
+          {
+            "value": "Unspecified"
+          },
+          {
+            "number": 1,
+            "value": "Pending"
+          },
+          {
+            "number": 2,
+            "value": "Processing"
+          },
+          {
+            "number": 3,
+            "value": "Processed"
+          },
+          {
+            "number": 4,
+            "value": "Failed"
+          }
+        ]
+      }
+    ],
+    "indexes": [
+      {
+        "fields": [
+          "id"
+        ],
+        "unique": true,
+        "primary": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "data_creator"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_updater"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "user_session_id"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "statement_timestamp"
+        ],
+        "order": true
+      },
+      {
+        "fields": [
+          "processing_status"
+        ],
+        "order": false
+      }
+    ],
+    "relations": [
+      {
+        "referencing_fields": [
+          "user_session_id"
+        ],
+        "referenced_entity": {
+          "name": "user_session"
+        },
+        "referenced_fields": [
+          "id"
+        ],
+        "cascade": true
+      }
+    ]
+  },
+  "task": {
+    "id": "68fd5593b7797f696b910611",
+    "root": "68fd5593b7797f696b910611",
+    "project": "68fd5593b7797f696b910610",
+    "user": "e89193f0-b031-7012-f7de-64a7fa63cd2f"
+  },
+  "namespace": {
+    "id": "01987547fc6c72ecb453bd2736bd4ea0",
+    "tenant": 2,
+    "name": "global-1",
+    "default": true
+  },
+  "revision": 1
+}

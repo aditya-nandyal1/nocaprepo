@@ -1,0 +1,150 @@
+{
+  "id": "102019a1d99369a7888889bc693988d96ba",
+  "version": "102019a1d99369a77fcafafc1bfbc99d807",
+  "schema": {
+    "name": "user_session",
+    "description": "Tracks active user voice sessions, including mode and duration.",
+    "fields": [
+      {
+        "name": "id",
+        "description": "Unique identifier for each data of this entity.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal system identifier."
+        }
+      },
+      {
+        "name": "data_creator",
+        "description": "id of the user who creates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "data_updater",
+        "description": "id of the user who updates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "create_time",
+        "description": "create time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "update_time",
+        "description": "update time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "mode",
+        "description": "The mode of the session, either single user or multi-user.",
+        "type": 100,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Session configuration data."
+        },
+        "enumeration": [
+          {
+            "value": "Unspecified"
+          },
+          {
+            "number": 1,
+            "value": "SingleUser"
+          },
+          {
+            "number": 2,
+            "value": "MultiUser"
+          }
+        ]
+      },
+      {
+        "name": "start_time",
+        "description": "The timestamp unix when the session started.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Session metadata."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "end_time",
+        "description": "The timestamp unix when the session ended.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Session metadata."
+        },
+        "nullable": true,
+        "format": "timestamp"
+      },
+      {
+        "name": "is_active",
+        "description": "Flag indicating if the session is currently active.",
+        "type": 3,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Session status indicator."
+        }
+      }
+    ],
+    "indexes": [
+      {
+        "fields": [
+          "id"
+        ],
+        "unique": true,
+        "primary": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "data_creator"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_updater"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "is_active"
+        ],
+        "order": false
+      }
+    ]
+  },
+  "task": {
+    "id": "68fd5593b7797f696b910611",
+    "root": "68fd5593b7797f696b910611",
+    "project": "68fd5593b7797f696b910610",
+    "user": "e89193f0-b031-7012-f7de-64a7fa63cd2f"
+  },
+  "namespace": {
+    "id": "01987547fc6c72ecb453bd2736bd4ea0",
+    "tenant": 2,
+    "name": "global-1",
+    "default": true
+  },
+  "revision": 1
+}

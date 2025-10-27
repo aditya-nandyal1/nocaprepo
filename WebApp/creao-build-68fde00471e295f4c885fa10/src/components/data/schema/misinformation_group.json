@@ -1,0 +1,160 @@
+{
+  "id": "102019a1d99369a7a0ba49c716efc0866c9",
+  "version": "102019a1d99369a77fcafafc1bfbc99d807",
+  "schema": {
+    "name": "misinformation_group",
+    "description": "Groups users who have stated identical misinformation.",
+    "fields": [
+      {
+        "name": "id",
+        "description": "Unique identifier for each data of this entity.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal system identifier."
+        }
+      },
+      {
+        "name": "data_creator",
+        "description": "id of the user who creates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "data_updater",
+        "description": "id of the user who updates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "create_time",
+        "description": "create time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "update_time",
+        "description": "update time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "false_statement_text",
+        "description": "The canonical text of the false statement.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 3,
+          "reason": "Contains user-generated content that was verified as false."
+        }
+      },
+      {
+        "name": "false_statement_text_hash",
+        "description": "A hash of the false statement text for efficient grouping.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal identifier for grouping similar statements."
+        }
+      },
+      {
+        "name": "user_ids",
+        "description": "A list of user identifiers who stated this piece of misinformation.",
+        "type": 101,
+        "compliance": {
+          "confidentiality": 3,
+          "reason": "Contains a list of user identifying information."
+        },
+        "items": {
+          "type": 1,
+          "compliance": {
+            "confidentiality": 3,
+            "reason": "User identifying information."
+          }
+        }
+      },
+      {
+        "name": "verification_result_id",
+        "description": "Reference to the verification result that confirmed the statement as false.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Links to the source verification data."
+        }
+      }
+    ],
+    "indexes": [
+      {
+        "fields": [
+          "id"
+        ],
+        "unique": true,
+        "primary": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "data_creator"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_updater"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "false_statement_text_hash"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "verification_result_id"
+        ],
+        "order": false
+      }
+    ],
+    "relations": [
+      {
+        "referencing_fields": [
+          "verification_result_id"
+        ],
+        "referenced_entity": {
+          "name": "verification_result"
+        },
+        "referenced_fields": [
+          "id"
+        ]
+      }
+    ]
+  },
+  "task": {
+    "id": "68fd5593b7797f696b910611",
+    "root": "68fd5593b7797f696b910611",
+    "project": "68fd5593b7797f696b910610",
+    "user": "e89193f0-b031-7012-f7de-64a7fa63cd2f"
+  },
+  "namespace": {
+    "id": "01987547fc6c72ecb453bd2736bd4ea0",
+    "tenant": 2,
+    "name": "global-1",
+    "default": true
+  },
+  "revision": 1
+}

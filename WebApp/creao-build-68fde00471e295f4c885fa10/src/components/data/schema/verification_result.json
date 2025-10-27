@@ -1,0 +1,197 @@
+{
+  "id": "102019a1d99369a7943b251fddd27355cd4",
+  "version": "102019a1d99369a77fcafafc1bfbc99d807",
+  "schema": {
+    "name": "verification_result",
+    "description": "Stores multi-agent truth verification results for a declarative statement.",
+    "fields": [
+      {
+        "name": "id",
+        "description": "Unique identifier for each data of this entity.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal system identifier."
+        }
+      },
+      {
+        "name": "data_creator",
+        "description": "id of the user who creates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "data_updater",
+        "description": "id of the user who updates the record",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        }
+      },
+      {
+        "name": "create_time",
+        "description": "create time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "update_time",
+        "description": "update time in timestamp unix",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal audit trail."
+        },
+        "format": "timestamp"
+      },
+      {
+        "name": "declarative_statement_id",
+        "description": "Reference to the declarative statement being verified.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Links to the source statement."
+        }
+      },
+      {
+        "name": "claude_verification",
+        "description": "JSON string containing the verification result from Claude.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal verification data from a third-party service."
+        },
+        "nullable": true
+      },
+      {
+        "name": "fetch_ai_verification",
+        "description": "JSON string containing the verification result from Fetch.ai.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal verification data from a third-party service."
+        },
+        "nullable": true
+      },
+      {
+        "name": "gemini_verification",
+        "description": "JSON string containing the verification result from Gemini.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal verification data from a third-party service."
+        },
+        "nullable": true
+      },
+      {
+        "name": "bright_data_verification",
+        "description": "JSON string containing the verification result from Bright Data.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Internal verification data from a third-party service."
+        },
+        "nullable": true
+      },
+      {
+        "name": "lava_gateway_consensus",
+        "description": "JSON string containing the consensus result from Lava Gateway.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Aggregated internal verification data."
+        },
+        "nullable": true
+      },
+      {
+        "name": "is_false_statement",
+        "description": "Flag indicating if the consensus determines the statement to be false.",
+        "type": 3,
+        "compliance": {
+          "confidentiality": 2,
+          "reason": "Final outcome of the verification process."
+        }
+      },
+      {
+        "name": "correct_information",
+        "description": "The corrected information if the statement was found to be false.",
+        "type": 1,
+        "compliance": {
+          "confidentiality": 1,
+          "reason": "Publicly verifiable correct information to counter misinformation."
+        },
+        "nullable": true
+      }
+    ],
+    "indexes": [
+      {
+        "fields": [
+          "id"
+        ],
+        "unique": true,
+        "primary": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "data_creator"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "data_updater"
+        ],
+        "order": false
+      },
+      {
+        "fields": [
+          "declarative_statement_id"
+        ],
+        "unique": true,
+        "order": false
+      },
+      {
+        "fields": [
+          "is_false_statement"
+        ],
+        "order": false
+      }
+    ],
+    "relations": [
+      {
+        "referencing_fields": [
+          "declarative_statement_id"
+        ],
+        "referenced_entity": {
+          "name": "declarative_statement"
+        },
+        "referenced_fields": [
+          "id"
+        ],
+        "cascade": true
+      }
+    ]
+  },
+  "task": {
+    "id": "68fd5593b7797f696b910611",
+    "root": "68fd5593b7797f696b910611",
+    "project": "68fd5593b7797f696b910610",
+    "user": "e89193f0-b031-7012-f7de-64a7fa63cd2f"
+  },
+  "namespace": {
+    "id": "01987547fc6c72ecb453bd2736bd4ea0",
+    "tenant": 2,
+    "name": "global-1",
+    "default": true
+  },
+  "revision": 1
+}
